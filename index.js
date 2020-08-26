@@ -8,9 +8,7 @@ const {prefix, token, youtubetoken} = require("./config.json");
 const twitter = require('./twitter-keys');
 
 var youtube = require('youtube-search');
-const { post } = require('request');
-const { stringify } = require('querystring');
-const { SSL_OP_SSLEAY_080_CLIENT_DH_BUG } = require('constants');
+const { access_token } = require('./twitter-keys');
 
 client.once('ready', () => {
     console.log("Bot running.");
@@ -24,7 +22,7 @@ var opts = {
 };
 
 var channel = NO_CHANNEL, active = 0, dirty = 0, INTERVAL = 5*3600000, VID_INTERVAL = 12*3600*1000;
-var ROLES_CHANNEL = NO_CHANNEL;
+var ROLES_CHANNEL = NO_CHANNEL, QUESTIONS_CHANNEL = NO_CHANNEL, BUSY = 0;
 let tweets = new Set();
 var vids = new Set(), ytchannels = new Set(['UC1_uAIS3r8Vu6JjXWvastJg','UCtAIs1VCQrymlAnw3mGonhw','UCoxcjq-8xIDTYp3uz647V5A',
 'UC9-y-6csu5WGm29I7JiwpnA','UCHnyfMqiRRG1u-2MsSQLbXA','UC6nSFpj9HTCZ5t-N3Rm3-HA','UCbfYPyITQ-7l4upoX8nvctg',
@@ -33,7 +31,11 @@ var emojiname = ['1⃣','2⃣', '3⃣', '4⃣', '5⃣', '6⃣', '7⃣', '8⃣', 
     rolename = ["Algebra", "Statistics & Probability", "Precalc and Trig", 
             "Calculus", "Linear Algebra", "Discrete Maths", "Advanced Math", "Computer Science",
             "Physics"];
-
+var BANNED = new Set();
+var POINTS = new Map();
+var PROBLEMS = new Map();
+var PENDING_USERS = new Map();
+var CURID = 0;
 
 async function react(message) {
     for (var i = 0; i < emojiname.length; i++)
@@ -162,8 +164,6 @@ async function update_vids() {
     }
 }
 
-update_vids();
-
 function add_channel(message) {
     arguments = message.content.split(" ");
     if (arguments.length > 1) {
@@ -183,24 +183,176 @@ function remove_channel(message) {
     console.log("Remove channel query by: " + message.member.user.tag);
 }
 
+function forbidden(message) {
+    message.channel.send(":x:**" + message.member.user.tag.split("#")[0] + "**, you can't use that.");
+}
+
+async function update_problems() {
+    while (true) {
+        await new Promise(r => setTimeout(r, 1*60*1000));
+        var date = new Date();
+        var ar = [], arr = [];
+        for (let [k,p] of PROBLEMS) {
+            var difference = date.getTime() - p.time.getTime();
+            if (difference >= 24 * 60 * 1000)
+                ar.push(k);
+        }
+        for (let k of ar)
+            PROBLEMS.delete(k);
+        for (let [k,p] of PENDING_USERS) {
+            var difference = date.getTime() - p.getTime();
+            if (difference >= 10 * 60 * 1000)
+                arr.push(k);
+        }
+        for (let k of arr)
+            PENDING_USERS.delete(k);
+    }
+}
+
+async function submit_pb(msg) {
+    if (PENDING_USERS.has(msg.author.id.toString())) {
+        msg.author.send("You can't make more than 1 problem submission request in a 10 minutes window.");
+        return;
+    }
+    if (BUSY) {
+        msg.author.send("Someone else is in the process of submitting a question/solution, please try again in 1 to 3 minutes.");
+        return;
+    }
+    BUSY = 1;
+
+    var problem = "**Problem #" + CURID.toString() + ":**\n";
+    var init = problem;
+    var first_msg = await msg.author.send("Please send all texts and files of your question then send `" + prefix + "done` when you're done or `" + prefix + "abort` to cancel.\nYou're given 2 minutes to complete this.");
+
+    var submit = 0;
+    var dm = first_msg.channel;
+    let collector = first_msg.channel.createMessageCollector(m => m.author.id === msg.author.id, { time: 120000});
+    // console.log(collector)
+
+    collector.on('collect', (message, col) => {
+        // console.log(message);
+        if (message.content.startsWith(`${prefix}done`)) {
+            submit = 1;
+            collector.stop();
+            return;
+        }
+        if (message.content.startsWith(`${prefix}abort`)) {
+            collector.stop();
+            return;
+        }
+        if (message.content != "")
+            problem += "`" + message.content + "`" + "\n";
+        var ar = message.attachments.array();
+        for (var i = 0; i < ar.length; i++)
+            problem += ar[i].proxyURL + "\n";
+    });
+    collector.on('end', (c, r) => {
+        var date = new Date();
+        PENDING_USERS.set(msg.author.id, date);
+        if (submit && problem != init) {
+            dm.send(":white_check_mark: Question submitted successfully, you've been awarded **40** points.");
+            msg.channel.send(problem);
+            if (QUESTIONS_CHANNEL != NO_CHANNEL && msg.channel != QUESTIONS_CHANNEL)
+                QUESTIONS_CHANNEL.send(problem);
+            if (POINTS.has(msg.author.id)) {
+                var up = POINTS.get(msg.author.id);
+                POINTS.delete(msg.author.id);
+                POINTS.set(msg.author.id,40+up);
+            }
+            else POINTS.set(msg.author.id,40);
+            PROBLEMS.set(CURID++, {time: date, member: msg.author});
+        } else dm.send("Cancelled submission.")
+
+        BUSY = 0;
+        console.log("Ask query by: " + msg.member.user.tag);
+    });
+}
+
+async function submit_sol(msg) {
+    if (BUSY) {
+        msg.author.send("Someone else is in the process of submitting a question/solution, please try again in 1 to 3 minutes.");
+        return;
+    }
+    
+    BUSY = 1;
+
+    var arguments = msg.content.split(" ");
+    var solution = "**Solution attempt to problem #" + arguments[1] + ":**\n";
+    var first_msg = await msg.author.send("Please send all texts and files of your solution then send `" + prefix + "done` when you're done or `" + prefix + "abort` to cancel.\nYou're given 3 minutes to complete this.");
+
+    var dm = first_msg.channel;
+    const collector = first_msg.channel.createMessageCollector(m => m.author.id === msg.author.id, { time: 180000});
+
+    var submit = 0;
+
+    collector.on('collect', message => {
+        if (message.content.startsWith(`${prefix}done`)) {
+            submit = 1;
+            collector.stop();
+            return;
+        }
+        if (message.content.startsWith(`${prefix}abort`)) {
+            collector.stop();
+            return;
+        }
+        solution += "`" + message.content + "`" + "\n";
+        var ar = message.attachments.array();
+        for (var i = 0; i < ar.length; i++)
+            solution += ar[i].proxyURL + "\n";
+    });
+
+    collector.on('end', (c, r) => {
+        var date = new Date();
+
+        if (submit && solution != "") {
+            dm.send(":white_check_mark: Solution submitted successfully, you've been awarded **50** points.");
+            solution += "\n<@" + msg.author.id + ">"; 
+            msg.channel.send(solution);
+            if (POINTS.has(msg.author.id)) {
+                var up = POINTS.get(msg.author.id);
+                POINTS.delete(msg.author.id);
+                POINTS.set(msg.author.id,50+up);
+            }
+            else POINTS.set(msg.author.id,50);
+        } else dm.send("Cancelled submission.")
+
+        BUSY = 0;
+        console.log("Submit query by: " + msg.member.user.tag);
+    });
+}
+
+function check_ban(message) {
+    return BANNED.has(message.author.id);
+}
+
+update_problems();
+update_vids();
+
 client.on('message', message => {
+    if (check_ban(message) || message.author.bot) return;
     // BEGIN HELP
     if (message.content.startsWith(`${prefix}help`)) {
         var temp = "`";
         message.channel.send("A brief description and guide on how to use me was sent to your DMs!");
         message.author.send("Commands:\n"+temp+temp+temp+
-        prefix+"mkroles -- sets roles channel and adds emojis from the source file\n"+
-        prefix+"setpostchannel -- sets the channel where posts will be made\n"+
-        prefix+"enablepost -- enables auto posts in postchannel\n"+
-        prefix+"disablepost -- disables auto posts\n"+
-        prefix+"setpostinterval x -- sets the interval between 2 posts to x seconds\n"+
-        prefix+"post -- replies with a random post\n"+
-        prefix+"yt title -- searches for title on youtube\n"+
-        prefix+"addyt channel_id -- adds youtube channel with id channel_id to the list of youtube channels to get posts from\n"+
-        prefix+"removeyt channel_id -- removes youtube channel with id channel_id from the list of youtube channels to get posts from\n"+
-        prefix+"number x -- replies with a math post about number x\n"+
-        prefix+"number x t -- replies with a general post about number x\n"+
-        prefix+"number m d -- replies with an event that happened on the d-th of m\n"+
+        prefix+"mkroles -- sets roles channel and adds emojis from the source file\n\n"+
+        prefix+"setpostchannel -- sets the channel where posts will be made\n\n"+
+        prefix+"enablepost -- enables auto posts in postchannel\n\n"+
+        prefix+"disablepost -- disables auto posts\n\n"+
+        prefix+"setpostinterval x -- sets the interval between 2 posts to x seconds\n\n"+
+        prefix+"post -- replies with a random post\n\n"+
+        prefix+"setquestionschannel -- sets the channel where submitted problems will be posted\n\n"+
+        prefix+"say sentence -- repeats sentence\n\n"+
+        prefix+"ask -- starts the problem submission process\n\n"+
+        prefix+"submit id -- starts the solution submission process for problem #id\n\n"+
+        prefix+"myscore -- shows your server score\n\n"+
+        prefix+"score @user -- shows user's server score\n\n"+
+        prefix+"yt title -- searches for title on youtube\n\n"+
+        prefix+"addyt channel_id -- adds youtube channel with id channel_id to the list of youtube channels to get posts from\n\n"+
+        prefix+"removeyt channel_id -- removes youtube channel with id channel_id from the list of youtube channels to get posts from\n\n"+
+        prefix+"number x -- replies with a math post about number x\n\n"+
+        prefix+"number x t -- replies with a general post about number x\n\n"+
+        prefix+"number m d -- replies with an event that happened on the d-th of m\n\n"+
         temp+temp+temp)
     }
     // END HELP
@@ -212,7 +364,13 @@ client.on('message', message => {
         channel = message.channel;
         update();
     } else if (message.content.startsWith(prefix + "setpostchannel")) {
-        message.channel.send(":x:**" + message.member.user.tag.split("#")[0] + "**, you can't use that.");
+        forbidden(message);
+    } else if (message.content.startsWith(prefix + "setquestionschannel") 
+    && message.member.hasPermission('MANAGE_CHANNELS')) {
+        message.channel.send(":white_check_mark: Questions channel set to " + message.guild.channels.cache.get(message.channel.id).toString()) + ".";
+        QUESTIONS_CHANNEL = message.channel;
+    } else if (message.content.startsWith(prefix + "setquestionschannel")) {
+        forbidden(message);
     } else if (message.content == prefix + "enablepost") {
         if (channel == NO_CHANNEL) {
             message.channel.send(":x: Please set the channel first using `" + prefix + "setpostchannel`.");
@@ -231,7 +389,7 @@ client.on('message', message => {
         stop_run();
         update();
     } else if (message.content.startsWith(`${prefix}setpostinterval`)) {
-        message.channel.send(":x:**" + message.member.user.tag.split("#")[0] + "**, you can't use that.");
+        forbidden(message);
     } else if (message.content == prefix + "fact") {
         send_fact(message.channel);
         console.log("Fact query by: " + message.member.user.tag);
@@ -255,12 +413,12 @@ client.on('message', message => {
     && message.member.hasPermission('MANAGE_CHANNELS')) {
         add_channel(message);
     } else if (message.content.startsWith(`${prefix}addyt`)) {
-        message.channel.send(":x:**" + message.member.user.tag.split("#")[0] + "**, you can't use that.");
+        forbidden(message);
     } else if (message.content.startsWith(`${prefix}removeyt`)
     && message.member.hasPermission('MANAGE_CHANNELS')) {
         remove_channel(message);
     } else if (message.content.startsWith(`${prefix}removeyt`)) {
-        message.channel.send(":x:**" + message.member.user.tag.split("#")[0] + "**, you can't use that.");
+        forbidden(message);
     } else if (message.content.startsWith(prefix + "mkroles")
     && message.member.hasPermission('MANAGE_ROLES')
     && message.member.hasPermission('MANAGE_CHANNELS')) {
@@ -268,7 +426,46 @@ client.on('message', message => {
         react(message);
         ROLES_CHANNEL = message.channel;
     } else if (message.content.startsWith(prefix + "mkroles")) {
-        message.channel.send(":x:**" + message.member.user.tag.split("#")[0] + "**, you can't use that.");
+        forbidden(message);
+    } else if (message.content.startsWith(`${prefix}say`)
+    && message.member.hasPermission('MANAGE_ROLES')
+    && message.member.hasPermission('MANAGE_CHANNELS')
+    && message.member.hasPermission("BAN_MEMBERS")) {
+        var arguments = message.content.split(" ");
+        var resp = "";
+        for (var i = 1; i < arguments.length; i++) {
+            resp += arguments[i];
+            if (i+1 < arguments.length)
+                resp += " ";
+        }
+        message.channel.send(resp);
+        console.log("Say query by: " + message.member.user.tag);
+    } else if (message.content.startsWith(`${prefix}say`)) {
+        forbidden(message);
+    } else if (message.content.startsWith(`${prefix}ask`)) {
+        message.channel.send("A message has been sent to your DMs!");
+        submit_pb(message);
+    } else if (message.content.startsWith(`${prefix}submit`)) {
+        var arguments = message.content.split(" ");
+        if (arguments.length < 2) {
+            message.channel.send(":x: Missing argument.");
+            return;
+        }
+        console.log(PROBLEMS);
+        if (!isNumeric(arguments[1]) || !PROBLEMS.has(parseInt(arguments[1]))) {
+            message.channel.send(":x: Inexistent problem.");
+            return;
+        }
+        message.channel.send("A message has been sent to your DMs!");
+        submit_sol(message);
+    } else if (message.content.startsWith(`${prefix}myscore`)) {
+        message.channel.send(POINTS.get(message.author.id));
+        console.log("Myscore query by: " + message.member.user.tag);
+    } else if (message.content.startsWith(`${prefix}score`)) {
+        if (message.mentions.members.first())
+            message.channel.send(POINTS.get(message.mentions.members.first().id));
+        else message.channel.send(":x: Missing argument.");
+        console.log("Score query by: " + message.member.user.tag);
     }
 });
 
