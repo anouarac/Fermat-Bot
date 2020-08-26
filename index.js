@@ -12,7 +12,7 @@ const { access_token } = require('./twitter-keys');
 
 client.once('ready', () => {
     console.log("Bot running.");
-    client.user.setActivity(`Under construction.. ${prefix}help`);
+    client.user.setActivity(`${prefix}help`);
 });
 var T = new twit(twitter);
 
@@ -189,7 +189,7 @@ function forbidden(message) {
 
 async function update_problems() {
     while (true) {
-        await new Promise(r => setTimeout(r, 1*60*1000));
+        await new Promise(r => setTimeout(r, 60*1000));
         var date = new Date();
         var ar = [], arr = [];
         for (let [k,p] of PROBLEMS) {
@@ -250,16 +250,16 @@ async function submit_pb(msg) {
         var date = new Date();
         PENDING_USERS.set(msg.author.id, date);
         if (submit && problem != init) {
-            dm.send(":white_check_mark: Question submitted successfully, you've been awarded **40** points.");
+            dm.send(":white_check_mark: Question submitted successfully, you've been awarded **30** points.");
             msg.channel.send(problem);
             if (QUESTIONS_CHANNEL != NO_CHANNEL && msg.channel != QUESTIONS_CHANNEL)
                 QUESTIONS_CHANNEL.send(problem);
             if (POINTS.has(msg.author.id)) {
                 var up = POINTS.get(msg.author.id);
                 POINTS.delete(msg.author.id);
-                POINTS.set(msg.author.id,40+up);
+                POINTS.set(msg.author.id,30+up);
             }
-            else POINTS.set(msg.author.id,40);
+            else POINTS.set(msg.author.id,30);
             PROBLEMS.set(CURID++, {time: date, member: msg.author});
         } else dm.send("Cancelled submission.")
 
@@ -350,8 +350,8 @@ client.on('message', message => {
         prefix+"yt title -- searches for title on youtube\n\n"+
         prefix+"addyt channel_id -- adds youtube channel with id channel_id to the list of youtube channels to get posts from\n\n"+
         prefix+"removeyt channel_id -- removes youtube channel with id channel_id from the list of youtube channels to get posts from\n\n"+
-        prefix+"number x -- replies with a math post about number x\n\n"+
-        prefix+"number x t -- replies with a general post about number x\n\n"+
+        prefix+"number x -- replies with a math fact about number x\n\n"+
+        prefix+"number x t -- replies with a general fact about number x\n\n"+
         prefix+"number m d -- replies with an event that happened on the d-th of m\n\n"+
         temp+temp+temp)
     }
