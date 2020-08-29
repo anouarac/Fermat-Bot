@@ -12,10 +12,6 @@ var youtube = require('youtube-search');
 const { access_token } = require('./twitter-keys');
 const { map } = require('async');
 
-client.once('ready', () => {
-    console.log("Bot running.");
-    client.user.setActivity(`${prefix}help`);
-});
 var T = new twit(twitter);
 
 var opts = {
@@ -101,12 +97,17 @@ function save_data() {
 function update_data() {
     data = fs.readFileSync("data.json");
     datajs = JSON.parse(data);
-    channel = datajs.channel;
+    if (datajs.channel != NO_CHANNEL)
+        channel = client.channels.cache.get(datajs.channel.id);
     active = datajs.active;
     INTERVAL = datajs.INTERVAL;
     VID_INTERVAL = datajs.VID_INTERVAL;
-    ROLES_CHANNEL = datajs.ROLES_CHANNEL;
-    QUESTIONS_CHANNEL = datajs.QUESTIONS_CHANNEL;
+    if (datajs.ROLES_CHANNEL != NO_CHANNEL) {
+        ROLES_CHANNEL = client.channels.cache.get(datajs.ROLES_CHANNEL.id);
+        ROLES_CHANNEL.messages.fetch();
+    }
+    if (datajs.QUESTIONS_CHANNEL != NO_CHANNEL)
+        QUESTIONS_CHANNEL = client.channels.cache.get(datajs.QUESTIONS_CHANNEL);
     tweets = collection_to_set(datajs.tweets);
     vids = collection_to_set(datajs.vids);
     ytchannels = collection_to_set(datajs.ytchannels);
@@ -117,11 +118,12 @@ function update_data() {
     CURID = datajs.CURID;
 }
 
+
 function update_role(member, new_score, guild) {
     for (var i = 0; i < score_roles.length; i++) {
         if (new_score >= threshold[i] && !member.bot) {
             var role = guild.roles.cache.find(role => role.name === score_roles[i]);
-            if (i + 1 == 7 || new_score < threshold[i + 1])
+            if (i + 1 == 8 || new_score < threshold[i + 1])
                 member.roles.add(role).catch(console.error);
             else if (member.roles.cache.find(r => r.name === score_roles[i]))
                 member.roles.remove(role).catch(console.error);
@@ -242,7 +244,8 @@ async function update_vids() {
         if (channel == NO_CHANNEL || !active) continue;
         VID_INTERVAL = temp;
         update_data();
-        for (let channel_id of ytchannels) {
+        VID_INTERVAL = temp;
+	for (let channel_id of ytchannels) {
             var response = await fetch(`https://www.googleapis.com/youtube/v3/search?key=${youtubetoken}&channelId=${channel_id}&part=snippet,id&order=date&maxResults=1`);
             if (response.status != 200) {
                 console.log(response.status);
@@ -258,8 +261,8 @@ async function update_vids() {
                 channel.send(`https://www.youtube.com/watch?v=${response.items[0].id.videoId}`);
                 vids.add(id);
             }
-        }
-        save_data();
+	}
+	save_data();
     }
 }
 
@@ -295,7 +298,7 @@ async function update_problems() {
         var ar = [], arr = [];
         for (let [k,p] of PROBLEMS) {
             var difference = date.getTime() - p.time.getTime();
-            if (difference >= 24 * 3600 * 1000)
+            if (difference >= 48 * 3600 * 1000)
                 ar.push(k);
         }
         for (let k of ar)
@@ -307,8 +310,8 @@ async function update_problems() {
         }
         for (let k of arr)
             PENDING_USERS.delete(k);
+        save_data();
     }
-    save_data();
 }
 
 async function submit_pb(msg) {
@@ -435,10 +438,27 @@ async function submit_sol(msg) {
 function check_ban(message) {
     return BANNED.has(message.author.id);
 }
+ 
+client.once('ready', () => {
+    console.log("Bot running.");
+    update_data();
+    client.user.setActivity(`${prefix}help`);
+});
 
-update_problems();
-update_vids();
-update_data();
+client.once('ready', () => {
+    update_problems();
+});
+
+client.once('ready', () => {
+    update_vids();
+});
+
+client.once('ready', () => {
+    update();
+});
+
+
+
 
 client.on('message', message => {
     if (check_ban(message) || message.author.bot) return;
@@ -474,8 +494,8 @@ client.on('message', message => {
         stop_run();
         message.channel.send(":white_check_mark: Channel set to " + message.guild.channels.cache.get(message.channel.id).toString()) + ".";
         channel = message.channel;
-        update();
         save_data();
+	    update();
     } else if (message.content.startsWith(prefix + "setpostchannel")) {
         forbidden(message);
     } else if (message.content.startsWith(prefix + "setquestionschannel") 
@@ -543,7 +563,7 @@ client.on('message', message => {
         react(message);
         ROLES_CHANNEL = message.channel;
         save_data();
-        message.channel.messages.fetch({ limit: 10 });
+        message.channel.messages.fetch();
     } else if (message.content.startsWith(prefix + "mkroles")) {
         forbidden(message);
     } else if (message.content.startsWith(`${prefix}say`)
@@ -576,6 +596,19 @@ client.on('message', message => {
         }
         message.channel.send("A message has been sent to your DMs!");
         submit_sol(message);
+    } else if (message.content.startsWith(`${prefix}ignore`)
+    && (message.member.hasPermission("BAN_MEMBERS") 
+    || message.member.user.tag == "Froopie#1304")) {
+        BANNED.add(message.mentions.users.first().id);
+        save_data();
+        console.log("Banned " + message.mentions.users.first().tag);
+    } else if (message.content.startsWith(`${prefix}unignore`)
+    && (message.member.hasPermission("BAN_MEMBERS") 
+    || message.member.user.tag == "Froopie#1304")) {
+        if (BANNED.has(message.mentions.users.first().id))
+            BANNED.remove(message.mentions.users.first().id);
+        save_data();
+        console.log("Unbanned " + message.mentions.users.first().tag);
     } else if (message.content.startsWith(`${prefix}score`)) {
         var person = message.author;
         var tag = person.tag;
