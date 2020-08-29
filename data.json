@@ -1,0 +1,28 @@
+{
+  "channel": -1,
+  "active": 0,
+  "INTERVAL": 18000000,
+  "VID_INTERVAL": 10000,
+  "ROLES_CHANNEL": -1,
+  "tweets": {},
+  "vids": {},
+  "ytchannels": {
+    "0": "UC1_uAIS3r8Vu6JjXWvastJg",
+    "1": "UCtAIs1VCQrymlAnw3mGonhw",
+    "2": "UCoxcjq-8xIDTYp3uz647V5A",
+    "3": "UC9-y-6csu5WGm29I7JiwpnA",
+    "4": "UCHnyfMqiRRG1u-2MsSQLbXA",
+    "5": "UC6nSFpj9HTCZ5t-N3Rm3-HA",
+    "6": "UCbfYPyITQ-7l4upoX8nvctg",
+    "7": "UCUHW94eEFW7hkUMVaZz4eDg",
+    "8": "UC6jM0RFkr4eSkzT5Gx0HOAw",
+    "9": "UCBa659QWEk1AI4Tg--mrJ2A",
+    "10": "UCYO_jab_esuFRV4b17AJtAw",
+    "11": "UCv0nF8zWevEsSVcmz6mlw6A"
+  },
+  "BANNED": {},
+  "POINTS": {},
+  "PROBLEMS": {},
+  "PENDING_USERS": {},
+  "CURID": 0
+}

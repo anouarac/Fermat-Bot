@@ -3,12 +3,14 @@ const twit = require('twit');
 const client = new Discord.Client();
 const NO_CHANNEL = -1;
 const fetch = require('node-fetch');
+const fs = require('fs');
 
 const {prefix, token, youtubetoken} = require("./config.json");
 const twitter = require('./twitter-keys');
 
 var youtube = require('youtube-search');
 const { access_token } = require('./twitter-keys');
+const { map } = require('async');
 
 client.once('ready', () => {
     console.log("Bot running.");
@@ -24,18 +26,111 @@ var opts = {
 var channel = NO_CHANNEL, active = 0, dirty = 0, INTERVAL = 5*3600000, VID_INTERVAL = 12*3600*1000;
 var ROLES_CHANNEL = NO_CHANNEL, QUESTIONS_CHANNEL = NO_CHANNEL, BUSY = 0;
 let tweets = new Set();
-var vids = new Set(), ytchannels = new Set(['UC1_uAIS3r8Vu6JjXWvastJg','UCtAIs1VCQrymlAnw3mGonhw','UCoxcjq-8xIDTYp3uz647V5A',
-'UC9-y-6csu5WGm29I7JiwpnA','UCHnyfMqiRRG1u-2MsSQLbXA','UC6nSFpj9HTCZ5t-N3Rm3-HA','UCbfYPyITQ-7l4upoX8nvctg',
-'UCUHW94eEFW7hkUMVaZz4eDg','UC6jM0RFkr4eSkzT5Gx0HOAw','UCBa659QWEk1AI4Tg--mrJ2A','UCYO_jab_esuFRV4b17AJtAw','UCv0nF8zWevEsSVcmz6mlw6A']);
+var vids = new Set(), ytchannels = new Set();
 var emojiname = ['1⃣','2⃣', '3⃣', '4⃣', '5⃣', '6⃣', '7⃣', '8⃣', '9⃣'];
     rolename = ["Algebra", "Statistics & Probability", "Precalc & Trig", 
             "Calculus", "Linear Algebra", "Discrete Maths", "Advanced Math", "Computer Science",
             "Physics"];
+var score_roles = ['Wood Puncher', 'Stone Miner', 'Citizen', 'Sub-helper', 'Helper', 'Supervisor', 
+            'Head Supervisor', 'Moderator'];
+var threshold = [100, 200, 400, 800, 1600, 3200, 4200, 6000];
 var BANNED = new Set();
 var POINTS = new Map();
 var PROBLEMS = new Map();
 var PENDING_USERS = new Map();
 var CURID = 0;
+
+var datajs = new Map(), data;
+
+function set_to_map(set) {
+    var ret = new Map();
+    var cnt = 0;
+    for (let i of set) {
+        var st = cnt.toString();
+        ret[st] = i;
+        cnt++;
+    }
+    return ret;
+}
+
+function map_to_collection(map) {
+    var ret = new Map();
+    var cnt = 0;
+    for (let [key,value] of map) {
+        var st = cnt.toString();
+        ret[st] = {"key": key, "value": value};
+        cnt++;
+    }
+    return ret;
+}
+
+function collection_to_set(collection) {
+    var ret = new Set();
+    for (var v in collection)
+        ret.add(collection[v]);
+    return ret;
+}
+
+function collection_to_map(collection) {
+    var ret = new Map();
+    for (var v in collection)
+        ret.set(collection[v].key, collection[v].value);
+    return ret;
+}
+
+function save_data() {
+    datajs = new Map();
+    datajs["channel"] = channel;
+    datajs["active"] = active;
+    datajs["INTERVAL"] = INTERVAL;
+    datajs["VID_INTERVAL"] = VID_INTERVAL;
+    datajs["ROLES_CHANNEL"] = ROLES_CHANNEL;
+    datajs["QUESTIONS_CHANNEL"] = QUESTIONS_CHANNEL;
+    datajs["tweets"] = set_to_map(tweets);
+    datajs["vids"] = set_to_map(vids);
+    datajs["ytchannels"] = set_to_map(ytchannels);
+    datajs["BANNED"] = set_to_map(BANNED);
+    datajs["POINTS"] = map_to_collection(POINTS);
+    datajs["PROBLEMS"] = map_to_collection(PROBLEMS);
+    datajs["PENDING_USERS"] = map_to_collection(PENDING_USERS);
+    datajs["CURID"] = CURID;
+    data = JSON.stringify(datajs, null, 2);
+    fs.writeFile("data.json", data, err => {if (err) console.log(err);});
+}
+
+function update_data() {
+    data = fs.readFileSync("data.json");
+    datajs = JSON.parse(data);
+    channel = datajs.channel;
+    active = datajs.active;
+    INTERVAL = datajs.INTERVAL;
+    VID_INTERVAL = datajs.VID_INTERVAL;
+    ROLES_CHANNEL = datajs.ROLES_CHANNEL;
+    QUESTIONS_CHANNEL = datajs.QUESTIONS_CHANNEL;
+    tweets = collection_to_set(datajs.tweets);
+    vids = collection_to_set(datajs.vids);
+    ytchannels = collection_to_set(datajs.ytchannels);
+    BANNED = collection_to_set(datajs.BANNED);
+    POINTS = collection_to_map(datajs.POINTS);
+    PROBLEMS = collection_to_map(datajs.PROBLEMS);
+    PENDING_USERS = collection_to_map(datajs.PENDING_USERS);
+    CURID = datajs.CURID;
+}
+
+function update_role(member, new_score, guild) {
+    for (var i = 0; i < score_roles.length; i++) {
+        if (new_score >= threshold[i] && !member.bot) {
+            var role = guild.roles.cache.find(role => role.name === score_roles[i]);
+            if (i + 1 == 7 || new_score < threshold[i + 1])
+                member.roles.add(role).catch(console.error);
+            else if (member.roles.cache.find(r => r.name === score_roles[i]))
+                member.roles.remove(role).catch(console.error);
+        } else if (new_score < threshold[i] && member.roles.cache.find(r => r.name === score_roles[i])) {
+            var role = guild.roles.cache.find(role => role.name === score_roles[i]);
+            member.roles.remove(role).catch(console.error); 
+        }
+    }
+}
 
 async function react(message) {
     for (var i = 0; i < emojiname.length; i++)
@@ -59,6 +154,7 @@ async function send_fact(c) {
     Text = await response.data[idx].full_text;
     url = await response.data[idx].id_str;
     tweets.add(url);
+    save_data();
     url = `https://twitter.com/fermatslibrary/status/${url}`;
     c.send("`" + Text +"`\nVia: " + url);
     console.log("Sending a fact");
@@ -134,6 +230,7 @@ function set_interval(message) {
         return;
     INTERVAL = parseInt(arguments[1])*1000;
     message.channel.send(":white_check_mark: Interval set to " + arguments[1] + ".");
+    save_data();
     console.log("Interval set by: " + message.member.user.tag + " to "+INTERVAL.toString());
 }
 
@@ -144,6 +241,7 @@ async function update_vids() {
         await new Promise(r => setTimeout(r, VID_INTERVAL));
         if (channel == NO_CHANNEL || !active) continue;
         VID_INTERVAL = temp;
+        update_data();
         for (let channel_id of ytchannels) {
             var response = await fetch(`https://www.googleapis.com/youtube/v3/search?key=${youtubetoken}&channelId=${channel_id}&part=snippet,id&order=date&maxResults=1`);
             if (response.status != 200) {
@@ -161,6 +259,7 @@ async function update_vids() {
                 vids.add(id);
             }
         }
+        save_data();
     }
 }
 
@@ -170,6 +269,7 @@ function add_channel(message) {
         ytchannels.add(arguments[1]);
         message.channel.send(":white_check_mark: Channel ID added successfully.");
     }
+    save_data();
     console.log("Add channel query by: " + message.member.user.tag);
 }
 
@@ -180,6 +280,7 @@ function remove_channel(message) {
     } else {
         message.channel.send(":x: Invalid query.");
     }
+    save_data();
     console.log("Remove channel query by: " + message.member.user.tag);
 }
 
@@ -207,6 +308,7 @@ async function update_problems() {
         for (let k of arr)
             PENDING_USERS.delete(k);
     }
+    save_data();
 }
 
 async function submit_pb(msg) {
@@ -218,7 +320,10 @@ async function submit_pb(msg) {
         msg.author.send("Someone else is in the process of submitting a question/solution, please try again in 1 to 3 minutes.");
         return;
     }
+
     BUSY = 1;
+    if (QUESTIONS_CHANNEL == NO_CHANNEL)
+        QUESTIONS_CHANNEL = msg.channel;
 
     var problem = "**Problem #" + CURID.toString() + ":**\n";
     var init = problem;
@@ -251,18 +356,18 @@ async function submit_pb(msg) {
         PENDING_USERS.set(msg.author.id, date);
         if (submit && problem != init) {
             dm.send(":white_check_mark: Question submitted successfully, you've been awarded **30** points.");
-            msg.channel.send(problem);
-            if (QUESTIONS_CHANNEL != NO_CHANNEL && msg.channel != QUESTIONS_CHANNEL)
-                QUESTIONS_CHANNEL.send(problem);
+            QUESTIONS_CHANNEL.send(problem + "\nFrom: <@" + msg.author.id + ">");
+            var up = 0;
             if (POINTS.has(msg.author.id)) {
-                var up = POINTS.get(msg.author.id);
+                up = POINTS.get(msg.author.id);
                 POINTS.delete(msg.author.id);
-                POINTS.set(msg.author.id,30+up);
+                POINTS.set(msg.author.id,30 + up);
             }
-            else POINTS.set(msg.author.id,30);
+            else POINTS.set(msg.author.id, 30);
+            update_role(msg.member, up + 30, msg.guild);
             PROBLEMS.set(CURID++, {time: date, member: msg.author});
         } else dm.send("Cancelled submission.")
-
+        save_data();
         BUSY = 0;
         console.log("Ask query by: " + msg.member.user.tag);
     });
@@ -276,6 +381,8 @@ async function submit_sol(msg) {
     
     BUSY = 1;
 
+    if (QUESTIONS_CHANNEL == NO_CHANNEL)
+        QUESTIONS_CHANNEL = msg.channel;
     var arguments = msg.content.split(" ");
     var solution = "**Solution attempt to problem #" + arguments[1] + ":**\n";
     var first_msg = await msg.author.send("Please send all texts and files of your solution then send `" + prefix + "done` when you're done or `" + prefix + "abort` to cancel.\nYou're given 3 minutes to complete this.");
@@ -308,15 +415,18 @@ async function submit_sol(msg) {
         if (submit && solution != "") {
             dm.send(":white_check_mark: Solution submitted successfully, you've been awarded **50** points.");
             solution += "\nBy: <@" + msg.author.id + ">\n<@" + PROBLEMS.get(parseInt(arguments[1])).member.id + ">"; 
-            msg.channel.send(solution);
+            QUESTIONS_CHANNEL.send(solution);
+            var up = 0;
             if (POINTS.has(msg.author.id)) {
-                var up = POINTS.get(msg.author.id);
+                up = POINTS.get(msg.author.id);
                 POINTS.delete(msg.author.id);
-                POINTS.set(msg.author.id,50+up);
+                POINTS.set(msg.author.id,50 + up);
             }
-            else POINTS.set(msg.author.id,50);
+            else POINTS.set(msg.author.id, 50);
+            update_role(msg.member, up + 50, msg.guild);
         } else dm.send("Cancelled submission.")
 
+        save_data();
         BUSY = 0;
         console.log("Submit query by: " + msg.member.user.tag);
     });
@@ -328,6 +438,7 @@ function check_ban(message) {
 
 update_problems();
 update_vids();
+update_data();
 
 client.on('message', message => {
     if (check_ban(message) || message.author.bot) return;
@@ -346,7 +457,6 @@ client.on('message', message => {
         prefix+"say sentence        -- repeats sentence\n\n"+
         prefix+"ask                 -- starts the problem submission process\n\n"+
         prefix+"submit id           -- starts the solution submission process for problem #id\n\n"+
-        prefix+"myscore             -- shows your server score\n\n"+
         prefix+"score @user         -- shows user's server score\n\n"+
         prefix+"addscore @user x    -- adds x to user's server score\n\n"+
         prefix+"yt title            -- searches for title on youtube\n\n"+
@@ -365,12 +475,14 @@ client.on('message', message => {
         message.channel.send(":white_check_mark: Channel set to " + message.guild.channels.cache.get(message.channel.id).toString()) + ".";
         channel = message.channel;
         update();
+        save_data();
     } else if (message.content.startsWith(prefix + "setpostchannel")) {
         forbidden(message);
     } else if (message.content.startsWith(prefix + "setquestionschannel") 
     && message.member.hasPermission('MANAGE_CHANNELS')) {
         message.channel.send(":white_check_mark: Questions channel set to " + message.guild.channels.cache.get(message.channel.id).toString()) + ".";
         QUESTIONS_CHANNEL = message.channel;
+        save_data();
     } else if (message.content.startsWith(prefix + "setquestionschannel")) {
         forbidden(message);
     } else if (message.content == prefix + "enablepost") {
@@ -380,14 +492,17 @@ client.on('message', message => {
         } else message.channel.send(":white_check_mark: Enabled in " +  message.guild.channels.cache.get(channel.id).toString() + ".");
         if (active) return;
         active = 1;
+        save_data();
         update();
     } else if (message.content == prefix + "disablepost") {
         stop_run();
         message.channel.send(":no_entry_sign: Disabled.");
         active = 0;
+        save_data();
     } else if (message.content.startsWith(`${prefix}setpostinterval`)
     && message.member.hasPermission('MANAGE_CHANNELS')) {
         set_interval(message);
+        save_data();
         stop_run();
         update();
     } else if (message.content.startsWith(`${prefix}setpostinterval`)) {
@@ -427,6 +542,8 @@ client.on('message', message => {
         if (!message.channel.guild) return;
         react(message);
         ROLES_CHANNEL = message.channel;
+        save_data();
+        message.channel.messages.fetch({ limit: 10 });
     } else if (message.content.startsWith(prefix + "mkroles")) {
         forbidden(message);
     } else if (message.content.startsWith(`${prefix}say`)
@@ -459,19 +576,17 @@ client.on('message', message => {
         }
         message.channel.send("A message has been sent to your DMs!");
         submit_sol(message);
-    } else if (message.content.startsWith(`${prefix}myscore`)) {
-        if (!POINTS.has(message.author.id))
-            POINTS.set(message.author.id, 0);
-        message.channel.send("Your current server score is: **" + POINTS.get(message.author.id).toString() + "**");
-        console.log("Myscore query by: " + message.member.user.tag);
     } else if (message.content.startsWith(`${prefix}score`)) {
+        var person = message.author;
+        var tag = person.tag;
         if (message.mentions.members.first()) {
-            if (!POINTS.has(message.mentions.members.first().id))
-                POINTS.set(message.mentions.members.first().id, 0);
-            message.channel.send(message.mentions.members.first().user.tag.split("#")[0] + "'s score is: **" 
-            + POINTS.get(message.mentions.members.first().id).toString() + "**");
+            person = message.mentions.members.first();
+            tag = person.user.tag;
         }
-        else message.channel.send(":x: Missing argument.");
+        if (!POINTS.has(person.id))
+            POINTS.set(person.id, 0)
+        message.channel.send(tag.split("#")[0] + "'s score is: **" 
+        + POINTS.get(person.id).toString() + "**");
         console.log("Score query by: " + message.member.user.tag);
     } else if (message.content.startsWith(`${prefix}addscore`)
             && message.member.hasPermission('MANAGE_ROLES')) {
@@ -481,9 +596,10 @@ client.on('message', message => {
                 POINTS.set(message.mentions.members.first().id, 0);
             var up = POINTS.get(message.mentions.members.first().id);
             POINTS.delete(message.mentions.members.first().id);
-            POINTS.set(message.mentions.members.first().id,parseInt(arguments[2])+up);
-            console.log(POINTS);
+            POINTS.set(message.mentions.members.first().id,parseInt(arguments[2]) + up);
             message.channel.send("Added **" + arguments[2] + "** points to " + message.mentions.members.first().user.tag.split("#")[0]+".");
+            save_data();
+            update_role(message.mentions.members.first(), up+parseInt(arguments[2]), message.guild);
         }
         else message.channel.send(":x: Wrong format.");
         console.log("Score add query by: " + message.member.user.tag);
@@ -492,18 +608,18 @@ client.on('message', message => {
     }
 });
 
-client.on("messageReactionAdd", (e, n) => {
-    if (n && !n.bot && e.message.channel.guild && ROLES_CHANNEL != NO_CHANNEL 
-        && e.message.channel == ROLES_CHANNEL) {
-            for (let o in emojiname)
+client.on("messageReactionAdd", async (e, n) => {
+    if (n && !n.bot && e.message.channel == ROLES_CHANNEL) {
+            for (let o in emojiname) {
                 if (e.emoji.name == emojiname[o]) {
                     let i = e.message.guild.roles.cache.find(e => e.name == rolename[o]);
                     e.message.guild.member(n).roles.add(i).catch(console.error)
                 }
+            }
         }
 });
 
-client.on("messageReactionRemove", (e, n) => {
+client.on("messageReactionRemove", async (e, n) => {
     if (n && !n.bot && e.message.channel.guild && ROLES_CHANNEL != NO_CHANNEL 
         && e.message.channel == ROLES_CHANNEL) {
             for (let o in emojiname)
