@@ -107,7 +107,7 @@ function update_data() {
         ROLES_CHANNEL.messages.fetch();
     }
     if (datajs.QUESTIONS_CHANNEL != NO_CHANNEL)
-        QUESTIONS_CHANNEL = client.channels.cache.get(datajs.QUESTIONS_CHANNEL);
+        QUESTIONS_CHANNEL = client.channels.cache.get(datajs.QUESTIONS_CHANNEL.id);
     tweets = collection_to_set(datajs.tweets);
     vids = collection_to_set(datajs.vids);
     ytchannels = collection_to_set(datajs.ytchannels);
@@ -241,7 +241,10 @@ async function update_vids() {
     VID_INTERVAL = 10000;
     while (true) {
         await new Promise(r => setTimeout(r, VID_INTERVAL));
-        if (channel == NO_CHANNEL || !active) continue;
+        if (channel == NO_CHANNEL || !active) {
+		VID_INTERVAL = 10000;
+		continue;
+	}
         VID_INTERVAL = temp;
         update_data();
         VID_INTERVAL = temp;
@@ -293,7 +296,7 @@ function forbidden(message) {
 
 async function update_problems() {
     while (true) {
-        await new Promise(r => setTimeout(r, 60*1000));
+        await new Promise(r => setTimeout(r, 30*1000));
         var date = new Date();
         var ar = [], arr = [];
         for (let [k,p] of PROBLEMS) {
@@ -304,7 +307,8 @@ async function update_problems() {
         for (let k of ar)
             PROBLEMS.delete(k);
         for (let [k,p] of PENDING_USERS) {
-            var difference = date.getTime() - p.getTime();
+	    var c = new Date(p);
+            var difference = date.getTime() - c.getTime();
             if (difference >= 10 * 60 * 1000)
                 arr.push(k);
         }
@@ -320,7 +324,7 @@ async function submit_pb(msg) {
         return;
     }
     if (BUSY) {
-        msg.author.send("Someone else is in the process of submitting a question/solution, please try again in 1 to 3 minutes.");
+        msg.author.send("Another user is in the process of submitting a question/solution, please try again in 1 to 3 minutes.");
         return;
     }
 
@@ -378,7 +382,7 @@ async function submit_pb(msg) {
 
 async function submit_sol(msg) {
     if (BUSY) {
-        msg.author.send("Someone else is in the process of submitting a question/solution, please try again in 1 to 3 minutes.");
+        msg.author.send("Another user is in the process of submitting a question/solution, please try again in 1 to 3 minutes.");
         return;
     }
     
@@ -577,7 +581,8 @@ client.on('message', message => {
             if (i+1 < arguments.length)
                 resp += " ";
         }
-        message.channel.send(resp);
+	if (resp != "")
+            message.channel.send(resp);
         console.log("Say query by: " + message.member.user.tag);
     } else if (message.content.startsWith(`${prefix}say`)) {
         forbidden(message);
